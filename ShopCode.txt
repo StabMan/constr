@@ -1,0 +1,203 @@
+@bot.message_handler(commands=['help'])
+def start_message(message):
+	bot.send_message(message.chat.id,'Используйте следующие команды для взаимодействия со своим магазином: /buy для покупки товаров, /mycart для просмотра корзины товаров.')
+
+@bot.callback_query_handler(func=lambda call: True)
+def shop_call(call):
+    if call.data == 'ДобавитьТовар':
+        message = bot.send_message(call.message.chat.id, 'Вы хотите пополнить корзину.')
+        bot.delete_message(call.message.chat.id, call.message.id)
+        tsBuy(message)
+    elif call.data == 'Корзина':
+        message = bot.send_message(call.message.chat.id, 'Вы перешли в корзину.')
+        USID = call.from_user.id
+        USID = str(USID)
+        bot.delete_message(call.message.chat.id, call.message.id)
+        print('Айдшник пользователя в call запросе: '+str(USID))
+
+        tsCart1(message, USID)
+    elif call.data == 'Купить':
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT SUM(tsList_price*tsCart_num) as Цена FROM tsList, tsCart WHERE tsList_id=tsCart_Lid ")
+        finPrice = cursor.fetchall()
+        ab = []
+        ab = finPrice[0]
+        #print(ab[0])
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT tsCart_verification FROM tsCart WHERE tsCart_Uid='{call.from_user.id}'")
+            uuuid = cursor.fetchall()
+            print('результат запроса на верификацию '+uuuid)
+            global guid_str
+            guid_str = uuuid[0]
+            if not guid_str:
+                guid = uuid.uuid4()
+                guid_str = str(guid)
+                print('значение верификации1 ' + str(guid))
+            pass
+        except:
+            guid = uuid.uuid4()
+            guid_str = str(guid)
+            print('значение верификации2 ' + str(guid))
+            pass
+        asssf=call.from_user.id
+        print(asssf)
+        cursor.execute(f"UPDATE tsCart SET tsCart_verification = '{guid_str}' WHERE tsCart_Uid = '{str(asssf)}'")
+        conn.commit()
+        bot.send_message(call.message.chat.id, f'Используя данные реквизиты: 0000-1111-2222-3333, оплатите {ab[0]} рублей с комментарием {guid_str}')
+        bot.delete_message(call.message.chat.id, call.message.id)
+    elif call.data == 'ПочиститьКорзину':
+        message = bot.send_message(call.message.chat.id,
+                         f'Корзина очищена и вы возвращены в каталог.')
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tsCart WHERE tsCart_Uid = ?", (call.from_user.id,))
+        conn.commit()
+        bot.delete_message(call.message.chat.id, call.message.id)
+        tsBuy(message)
+
+count_times = [0]
+@bot.message_handler(commands=['buy'])
+def tsBuy(message):
+    bot.send_message(message.chat.id, 'Вот каталог товаров:\n')
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 'Товар: ' || tsList_name || '.', 'Цена: ' || tsList_price || ' рублей,', 'в количестве '||  tsList_limit || '.' FROM tsList")
+    rows = cursor.fetchall()
+    my_list = ["\n"]
+    for x in rows:
+        my_list.append(' '.join(map(str, (x))))
+    my_str = '\n\n'.join(map(str, my_list))
+    bot.send_message(message.chat.id, my_str)
+
+
+
+    msg = bot.send_message(message.chat.id, 'Введите название товара из каталога, а также его количество через запятую.')
+    bot.register_next_step_handler(msg, tsBuyL)
+
+def tsBuyL(message):
+    # id user'a
+    global tscuID
+    tscuID = message.from_user.id
+    print(tscuID, ' Айдшник '+message.from_user.first_name)
+    global buyName
+    buyName = message.text
+    a=[]
+    a=buyName.split(sep=',')
+    #buyName.split(sep=' ')
+    print(a[0],a[1])
+    check=str(a[0])
+
+    # проверка на наличие товара
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT tsList_name FROM tsList WHERE tsList_name='{check}'")
+        cCheckn = cursor.fetchone()
+        print(f'name of товара {cCheckn[0]}')
+    except:
+        bot.send_message(message.chat.id, 'Такого товара нет, попробуйте еще раз.')
+        tsBuy(message)
+
+        #проверка на количества
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT tsList_Limit FROM tsList WHERE tsList_name='{str(a[0])}'")
+    cLim = cursor.fetchone()
+    if round(int(a[1])) <= 0:
+        bot.send_message(message.chat.id, 'Введенное Вами количество неверно.')
+        tsBuy(message)
+
+    # проверка на количество, если ввел больше, чем доступно = сколько есть
+    if round(int(a[1])) > int(cLim[0]):
+        a[1]=int(cLim[0])
+    print(f'Количество товара {a[1]}')
+
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT tsList_id FROM tsList WHERE tsList_name='{a[0]}'")
+    cName = cursor.fetchone()
+    print(f'id товара {cName[0]}')
+
+    db_tempShopcart(tscartUID=tscuID, tscartIID=cName[0], tscartNum=int(a[1]))
+
+    bot.send_message(message.chat.id, f'В корзину было добавлено {a[0]} в количестве ({int(a[1])}).')
+
+    key = types.InlineKeyboardMarkup(row_width=1)
+    butontsa = types.InlineKeyboardButton(text="Добавить еще товар",
+                                        callback_data="ДобавитьТовар")
+    butontsc = types.InlineKeyboardButton(text='Перейти в корзину',
+                                        callback_data='Корзина')
+    key.add(butontsa, butontsc)
+    bot.send_message(message.chat.id, f"Хотите добавить в корзину еще товар?", reply_markup=key)
+
+#слева переменная для записи/справа переменная из функции
+#db_users(userID=user_ID, userName=user_Name)
+
+
+def db_tempShopcart(tscartUID: str, tscartIID: str, tscartNum: int,):
+    cursor.execute('INSERT INTO tsCart (tsCart_Uid, tsCart_Lid, tsCart_num) VALUES (?, ?, ?)', (tscartUID, tscartIID, tscartNum, ))
+    conn.commit()
+
+@bot.message_handler(commands=['mycart'])
+def tsCart(message):
+    print(message.from_user.id)
+    if message.text:
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT tsCart_Uid FROM tsCart WHERE tsCart_Uid='{message.from_user.id}'")
+            usId = cursor.fetchall()
+            print(f'id usera {usId[0]}')
+        except:
+            bot.send_message(message.chat.id, 'Ваш идентификатор не найден, поробуйте еще раз.')
+            tsBuy(message)
+
+    bot.send_message(message.chat.id, 'Ваша корзина товаров:\n')
+    global usID
+    usId=message.from_user.id
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT 'Название товара: ' || tsList_name || ',' , 'его количесвто: ' || tsCart_num || '.' , 'Цена: ' || (tsList_price*tsCart_num) || ' рублей.' as Цена FROM tsList, tsCart WHERE tsList_id=tsCart_Lid AND tsCart_Uid = {message.from_user.id}")
+    rows = cursor.fetchall()
+    print(rows)
+    my_list = ["\n"]
+    for x in rows:
+        my_list.append(' '.join(map(str, (x))))
+    my_str = '\n\n'.join(map(str, my_list))
+    key = types.InlineKeyboardMarkup(row_width=1)
+    butontsa1 = types.InlineKeyboardButton(text="Добавить еще товар",
+                                          callback_data="ДобавитьТовар")
+    butontsb1 = types.InlineKeyboardButton(text='Купить',
+                                          callback_data='Купить')
+    butontscl = types.InlineKeyboardButton(text='Очистить корзину',
+                                          callback_data='ПочиститьКорзину')
+    key.add(butontsa1, butontsb1, butontscl)
+    bot.send_message(message.chat.id, my_str, reply_markup=key)
+
+
+def tsCart1(message, USID):
+    print('Айдишник юзера '+USID)
+
+    bot.send_message(message.chat.id, 'Ваша корзина товаров:\n')
+    global usID
+    usId=message.from_user.id
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT 'Название товара: ' || tsList_name || ',' , 'его количесвто: ' || tsCart_num || '.' , 'Цена: ' || (tsList_price*tsCart_num) || ' рублей.' as Цена FROM tsList, tsCart WHERE tsList_id=tsCart_Lid AND tsCart_Uid = {USID}")
+    rows = cursor.fetchall()
+    print(rows)
+    my_list = ["\n"]
+    for x in rows:
+        my_list.append(' '.join(map(str, (x))))
+    my_str = '\n\n'.join(map(str, my_list))
+    key = types.InlineKeyboardMarkup(row_width=1)
+    butontsa1 = types.InlineKeyboardButton(text="Добавить еще товар",
+                                          callback_data="ДобавитьТовар")
+    butontsb1 = types.InlineKeyboardButton(text='Купить',
+                                          callback_data='Купить')
+    butontscl = types.InlineKeyboardButton(text='Очистить корзину',
+                                          callback_data='ПочиститьКорзину')
+    key.add(butontsa1, butontsb1, butontscl)
+    bot.send_message(message.chat.id, my_str, reply_markup=key)
+bot.infinity_polling()
